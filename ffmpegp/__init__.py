@@ -8,6 +8,9 @@ import subprocess
 import threading
 from jsonpath_ng import parse
 
+stop_event = threading.Event()
+stdout_lock = threading.Lock()
+
 ffmpeg_path = shutil.which("ffmpeg")
 ffprobe_path = shutil.which("ffprobe")
 prev_bar_fill_length = None
@@ -173,8 +176,9 @@ def print_progress_bar(start_time, iteration, total, pos_args, prefix='', suffix
     if prev_bar_fill_length is not None and bar_fill_length != prev_bar_fill_length:
         sys.stdout.write("\r" + " " * prev_bar_fill_length)
     prev_bar_fill_length = bar_fill_length
-
+    
     sys.stdout.write(f'\r' + bar_fill)
+    sys.stdout.flush()
 
     # Print New Line on Complete
     if iteration == total or int(round(float(percent), 0)) == 100:
@@ -187,9 +191,11 @@ def print_progress_bar(start_time, iteration, total, pos_args, prefix='', suffix
             bar_fill = re.sub(r'\x1B\[[^m]*m', '', f"{prefix}progress=100% {suffix.replace("|", "").strip()} time={formatted_time}")
         else:
             bar_fill = f"{prefix}{bar} 100% {done} {formatted_time}"
-            
+        
+        
         sys.stdout.write("\r" + " " * bar_fill_length)
         sys.stdout.write(f"\r" + bar_fill)
+        sys.stdout.flush
         return "OK"
 
 def check_file(output_filename, output_path, pos_args, skip=False):
@@ -210,10 +216,12 @@ def read_pipe(process, pipe, pos_args, input_file, prefix):
     frame = False
     stream = False
 
-    while True:
+    while not stop_event.is_set():
+        
         line = pipe.readline()
         if not line:
             break
+            
         text = line.strip()
         stdline.append(text)
 
@@ -227,7 +235,29 @@ def read_pipe(process, pipe, pos_args, input_file, prefix):
 
         if stream and ("frame=" in text.split() or "size=" in text or "time=" in text):
             part_duration = extract_time(text)
-            speed = text.split()[-1].split("=")[-1]
+            #print(text.split("speed=")[1].split()[0])
+            speed = ""
+            word="speed="
+            
+            for i in range(len(text)):
+                for j in range(len(word)):
+                    if i+j < len(text): # make sure loop not exceed the index of text.
+                        if text[i+j] != word[j]:
+                            #print(text[i+j])
+                            break # break the loop if word indexes matches.
+                if j == len(word) - 1:
+                    #print(text)
+                    is_char=False
+                    for k in range(i+len(word), len(text)):
+                        char = text[k].strip()
+                        if not char and is_char:
+                            break
+                            
+                        if char:
+                            is_char = True
+                        speed += char
+                        
+            #speed = text.split()[-1].split("speed=")
 
             if part_duration != "N/A" or speed != "N/A":
                 try:
@@ -268,6 +298,8 @@ def read_pipe(process, pipe, pos_args, input_file, prefix):
                     error = False
                 except Exception:
                     break
+        #if stop_event.wait(0.1):
+        #    break
 
     # Close the pipe after reading
     pipe.close()
@@ -295,7 +327,7 @@ def start_process(args, pos_args, input_file, prefix='', pid=None):
         # Start the threads
         stdout_thread.start()
         stderr_thread.start()
-
+        
         # Wait for both threads to complete
         stdout_thread.join()
         stderr_thread.join()
@@ -316,8 +348,11 @@ def start_process(args, pos_args, input_file, prefix='', pid=None):
                 os.kill(process.pid, 9)
             except Exception:
                 pass
+        stop_event.set() # stop the threads
         print("\nProgram interrupted!")
-        sys.exit(1)
+
+        # Hard exit (no threading shutdown)
+        os._exit(1)
 
 try:
     raw_args = sys.argv[1:]
