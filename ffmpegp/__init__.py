@@ -6,13 +6,12 @@ import time
 import shutil
 import subprocess
 import threading
+from random import randint
 from jsonpath_ng import parse
-
-stop_event = threading.Event()
-stdout_lock = threading.Lock()
 
 ffmpeg_path = shutil.which("ffmpeg")
 ffprobe_path = shutil.which("ffprobe")
+stop_event = threading.Event()
 prev_bar_fill_length = None
 input_filenames = []
 error = True
@@ -102,8 +101,11 @@ def gradient_text(word, colors):
     return gradient_str
 
 def duration_to_seconds(duration):
-    h, m, s = map(float, duration.split(':'))
-    return h * 3600 + m * 60 + s
+    try:
+        h, m, s = map(float, duration.split(':'))
+        return h * 3600 + m * 60 + s
+    except Exception:
+        return 0
 
 def extract_time(log_line):
     # Define the regular expression pattern to extract the time
@@ -114,9 +116,32 @@ def extract_time(log_line):
     
     # If a match is found, return the extracted time
     if match:
-        return match.group(1)
+        return duration_to_seconds(match.group(1))
     else:
-        return "N/A"
+        return 0
+        
+def extract_speed(text):
+    speed = ""
+    word="speed="
+            
+    for i in range(len(text)):
+        for j in range(len(word)):
+            if i+j < len(text): # make sure loop not exceed the index of text.
+                if text[i+j] != word[j]:
+                    #print(text[i+j])
+                    break # break the loop if word indexes matches.
+        if j == len(word) - 1:
+            #print(text)
+            is_char=False
+            for k in range(i+len(word), len(text)):
+                char = text[k].strip()
+                if not char and is_char:
+                    break
+                            
+                if char:
+                    is_char = True
+                    speed += char
+    return speed if speed else 0
 
 def get_readable_file_size(file_path):
     size_bytes = os.path.getsize(file_path)
@@ -125,51 +150,72 @@ def get_readable_file_size(file_path):
             return f"{size_bytes:.2f} {unit}"
         size_bytes /= 1024
 
-def print_progress_bar(start_time, iteration, total, pos_args, prefix='', suffix='', done='Complete', decimals=1, length=30, fill='━'):
-    global prev_bar_fill_length
-
-    if suffix:
-        suffix = f"| {suffix} |"
-    else:
-        suffix = "|"
-
-    if done:
-        if "--colored" in pos_args:
-            colors = [(255, 255, 100), (100, 200, 255)] # Yellow -> Cyan
-            done = f"| {gradient_text(done, colors)} |"
-        else:
-            done = f"| \33[92m{done}\33[0m |"
-    else:
-        done = "|"
-
-    color = "\33[93m"
-    percent = ("{0:." + str(decimals) + "f}").format(100 * (iteration / float(total)))
-    filled_length = int(length * iteration // total)
-
-    # Capture end time
+def get_formatted_time(start_time):
+     # Capture end time
     end_time = time.time()
 
     # Calculate elapsed time
     elapsed_time = end_time - start_time
 
     # Format the difference as HH:MM:SS
-    formatted_time = time.strftime("%H:%M:%S", time.gmtime(elapsed_time))
+    return time.strftime("%H:%M:%S", time.gmtime(elapsed_time))
+
+def unknown_progress(start_time, pos_args, prefix, suffix):
+    char = "━"
+    max_len = 30
+    counter = 0
+    speed = float(f"0.0{randint(2, 6)}")
+    colors = [(100, 200, 255), (255, 100, 255), (255, 255, 100)]  # Cyan -> Pink -> Yellow
+    
+    fill = int(max_len / 2) * char
+        
+    for i in range(max_len+1):
+        if counter <= len(fill):
+            if "--colored" in pos_args:
+                bar = f"{gradient_text(char * counter, colors)}\33[0m" + f"\33[90m{char}\33[0m" * (max_len - counter)
+            else:
+                bar = f"\33[92m{char}\33[0m" * counter + f"\33[90m{char}\33[0m" * (max_len - counter)
+            print("\r" + bar, "|", suffix, end="", flush=True)
+        elif counter > len(fill) :
+            if "--colored" in pos_args:
+                bar = f"\33[90m{char}\33[0m" * (counter - len(fill)) + f"\33[92m{gradient_text(fill, colors)}\33[0m" + f"\33[90m{char}\33[0m" * (max_len - counter)
+            else:
+                bar = f"\33[90m{char}\33[0m" * (counter - len(fill)) + f"\33[92m{fill}\33[0m" + f"\33[90m{char}\33[0m" * (max_len - counter)
+            print("\r" + bar, "|", suffix, end="", flush=True)
+            
+        if counter == max_len:
+            for i in range(len(fill)+1):
+                if "--colored" in pos_args:
+                    bar = f"\33[90m{char}\33[0m" * ((counter - len(fill)) + i) + f"\33[92m{gradient_text(char * (len(fill)-i), colors)}\33[0m"
+                else:
+                    bar = f"\33[90m{char}\33[0m" * ((counter - len(fill)) + i) + f"\33[92m{char}\33[0m" * (len(fill)-i)
+                print("\r" + bar, "|", suffix, end="", flush=True)
+                time.sleep(speed)
+            counter = 1
+        else:
+            counter += 1
+        time.sleep(speed)
+
+def known_progress(start_time, iteration, total, pos_args, prefix='', suffix='', done='', decimals=1, length=30, fill='━'):
+    global prev_bar_fill_length
+
+    color = "\33[93m"
+    
+    percent = ("{0:." + str(decimals) + "f}").format(100 * (iteration / float(total)))
+    filled_length = int(length * iteration // total)
 
     if "--colored" in pos_args:
-        colors = [(100, 200, 255), (255, 255, 100)]  # Cyan -> Yellow
-        formatted_time = gradient_text(formatted_time, colors)
         colors = [(100, 200, 255), (255, 100, 255), (255, 255, 100)]  # Cyan -> Pink -> Yellow
         bar = f"{gradient_text(fill * filled_length, colors)}" + f'\33[90m{fill}\33[0m' * (length - filled_length)
     else:
         if float(percent) >= 30:
             color = "\33[92m"
-        formatted_time = f"\33[96m{formatted_time}\33[0m"
         bar = f"{color}{fill * filled_length}" + f'\33[90m{fill}\33[0m' * (length - filled_length)
 
     if "--stdout" in pos_args:
-        bar_fill = re.sub(r'\x1B\[[^m]*m', '', f"{prefix}progress={percent}% {suffix.replace("|", "").strip()} time={formatted_time}")
+        bar_fill = f"{prefix}progress={percent}% {suffix}"
     else:
-        bar_fill = f"{prefix}{bar} {percent}% {suffix} {formatted_time}"
+        bar_fill = f"{prefix}{bar} {percent}% | {suffix}"
 
     bar_fill_length = len(re.sub(r'\x1B\[[^m]*m', '', bar_fill))
         
@@ -188,10 +234,9 @@ def print_progress_bar(start_time, iteration, total, pos_args, prefix='', suffix
             bar = f"{color}{fill}\33[0m" * length
 
         if "--stdout" in pos_args:
-            bar_fill = re.sub(r'\x1B\[[^m]*m', '', f"{prefix}progress=100% {suffix.replace("|", "").strip()} time={formatted_time}")
+            bar_fill = f"{prefix}progress=100% {suffix}"
         else:
-            bar_fill = f"{prefix}{bar} 100% {done} {formatted_time}"
-        
+            bar_fill = f"{prefix}{bar} 100% {done} {suffix.split("|")[1].strip()}"
         
         sys.stdout.write("\r" + " " * bar_fill_length)
         sys.stdout.write(f"\r" + bar_fill)
@@ -209,12 +254,53 @@ def check_file(output_filename, output_path, pos_args, skip=False):
                 else:
                     return True
 
+def get_metadata(stdline, input_file, pos_args):
+    for index, path in enumerate(input_file):
+        inputs = []
+        path = path.replace("\"", "")
+        if "--stdout" in pos_args:
+            inputs.append(f"input{index}:\"{path}\"")
+        else:
+            print(f"Input #{index}: from \"{path}\"")
+        
+class Debug:
+    set = False
+    
+    def printf(self, *args, **kwargs):
+        if self.set:
+            print(*args, **kwargs)
+            
+def format_suffix(start_time, pos_args, speed_status):
+    done = f"| \33[92mComplete\33[0m |"
+    elapsed_time = get_formatted_time(start_time)
+                    
+    speed = f"\33[92mspeed:{speed_status}\33[0m"
+    formatted_time = f"\33[96m{elapsed_time}\33[0m"
+                    
+    if "--colored" in pos_args:
+        colors = [(255, 255, 100), (100, 200, 255)] # Yellow -> Cyan
+        done = f"| {gradient_text("Complete", colors)} |"
+        colors = [(240, 120, 255), (255, 250, 100)]  # Pink -> Yellow
+        speed = f'{gradient_text(f"speed:{speed_status}", colors)}'
+        colors = [(100, 200, 255), (255, 255, 100)]  # Cyan -> Yellow
+        formatted_time = gradient_text(elapsed_time, colors)
+                    
+    if "--stdout" in pos_args:
+        suffix = f"speed={speed_status} time={elapsed_time}"
+    else:
+        suffix = f"{speed} | {formatted_time}"
+    
+    return suffix, done
+                        
 
 def read_pipe(process, pipe, pos_args, input_file, prefix):
     global error, stdline
     progress = None
-    frame = False
+    ffstats = False
     stream = False
+    
+    debug = Debug()
+    #debug.set = True
 
     while not stop_event.is_set():
         
@@ -224,82 +310,48 @@ def read_pipe(process, pipe, pos_args, input_file, prefix):
             
         text = line.strip()
         stdline.append(text)
+        
+        if '--log' in pos_args:
+            print(text)
+            continue
 
         if "Duration" in text and not stream:
             # Capture start time
             start_time = time.time()
+            debug.printf("SUCCESS 1/4")
 
             # Scrap total_duration
-            total_duration = text.split()[1].strip(",")
+            formatted_total_dur = text.split()[1].strip(",")
+            total_duration = duration_to_seconds(formatted_total_dur)
             stream = True
 
         if stream and ("frame=" in text.split() or "size=" in text or "time=" in text):
             part_duration = extract_time(text)
-            #print(text.split("speed=")[1].split()[0])
-            speed = ""
-            word="speed="
-            
-            for i in range(len(text)):
-                for j in range(len(word)):
-                    if i+j < len(text): # make sure loop not exceed the index of text.
-                        if text[i+j] != word[j]:
-                            #print(text[i+j])
-                            break # break the loop if word indexes matches.
-                if j == len(word) - 1:
-                    #print(text)
-                    is_char=False
-                    for k in range(i+len(word), len(text)):
-                        char = text[k].strip()
-                        if not char and is_char:
-                            break
-                            
-                        if char:
-                            is_char = True
-                        speed += char
+            speed_status = extract_speed(text)
                         
-            #speed = text.split()[-1].split("speed=")
-
-            if part_duration != "N/A" or speed != "N/A":
+            if part_duration != 0 or speed_status != 0:
+                debug.printf("SUCCESS 2/4")
                 try:
-                    # Convert durations to seconds
-                    total_seconds = duration_to_seconds(total_duration)
-                    part_seconds = duration_to_seconds(part_duration)
-                    iteration, total = map(lambda x : round(x, 0), [part_seconds, total_seconds])
-                    frame = True
-
-                    if error:
-                        if '--log' in pos_args:
-                            print("\n".join(stdline[:-1]))
-                        else:
-                            for index, path in enumerate(input_file):
-                                inputs = []
-                                path = path.replace("\"", "")
-                                if "--stdout" in pos_args:
-                                    inputs.append(f"input{index}:\"{path}\"")
-                                else:
-                                    print(f"Input #{index}: from \"{path}\"")
-
-                            # if "--stdout" in pos_args:
-                            #     print(json.dumps({
-                            #         "input": inputs
-                            #     }))
+                    iteration, total = map(lambda x : round(x, 0), [part_duration, total_duration])
                     
-                    if "--stdout" in pos_args:
-                        suffix = f"speed={speed}"
-                    elif "--colored" in pos_args:
-                        colors = [(240, 120, 255), (255, 250, 100)]  # Pink -> Yellow
-                        suffix = f'{gradient_text(f"speed:{speed}", colors)}'
+                    if not ffstats:
+                        get_metadata(stdline, input_file, pos_args)
+                        ffstats = True
+                    
+                    debug.printf("SUCCESS 3/4", iteration, total)
+                    
+                    suffix, done = format_suffix(start_time, pos_args, speed_status)
+                    
+                    if total != 0:
+                        progress = known_progress(start_time, iteration, total, pos_args, prefix=prefix, suffix=suffix, done=done)
                     else:
-                        suffix = f"\33[92mspeed:{speed}\33[0m"
-
-                    progress = print_progress_bar(start_time, iteration, total, pos_args, prefix=prefix, suffix=suffix)
+                        progress = unknown_progress(start_time, pos_args, prefix, suffix)
+                        
                     if progress == "OK":
                         break
                     error = False
                 except Exception:
                     break
-        #if stop_event.wait(0.1):
-        #    break
 
     # Close the pipe after reading
     pipe.close()
@@ -307,8 +359,15 @@ def read_pipe(process, pipe, pos_args, input_file, prefix):
     # Wait for the process to complete
     process.wait()
 
-    if process.returncode == 0 and stream and frame and progress != "OK":
-        print_progress_bar(start_time, total, total, pos_args, prefix=prefix, suffix=suffix)
+    if (
+    process.returncode == 0
+    and stream
+    and ffstats
+    and progress != "OK"
+    ):
+        known_progress(start_time, 100, 100, pos_args, prefix=prefix, suffix=suffix, done=done)
+    
+    debug.printf("SUCCESS 4/4", stream, ffstats, progress)
 
 def start_process(args, pos_args, input_file, prefix='', pid=None):
     global error, stdline
@@ -335,6 +394,8 @@ def start_process(args, pos_args, input_file, prefix='', pid=None):
         if error:
             output = "\n".join(stdline)
             print(output.replace("usage: ffmpeg", f"usage: ffmpegp").strip())
+            colors = [(100, 200, 255), (255, 100, 255)]  # Cyan -> Pink
+            print(output.replace("Use -h to", f"Use \33[92m-h\33[0m to get \33[93mffmpeg's\33[0m help and use \33[94mhelp\33[0m to get {gradient_text('ffmpegp\'s', colors)} help"))
         else:
             print()
 
