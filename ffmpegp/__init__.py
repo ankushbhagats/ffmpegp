@@ -5,14 +5,14 @@ import json
 import time
 import shutil
 import subprocess
-import threading
 from random import randint
 from jsonpath_ng import parse
 
 ffmpeg_path = shutil.which("ffmpeg")
 ffprobe_path = shutil.which("ffprobe")
-stop_event = threading.Event()
-prev_bar_fill_length = None
+
+prev_unknown_bar_fill_length = 0
+prev_known_bar_fill_length = 0
 input_filenames = []
 error = True
 stdline = []
@@ -161,6 +161,8 @@ def get_formatted_time(start_time):
     return time.strftime("%H:%M:%S", time.gmtime(elapsed_time))
 
 def unknown_progress(start_time, pos_args, prefix, suffix):
+    global prev_unknown_bar_fill_length
+    
     char = "━"
     max_len = 30
     counter = 0
@@ -175,15 +177,18 @@ def unknown_progress(start_time, pos_args, prefix, suffix):
                 bar = f"{gradient_text(char * counter, colors)}\33[0m" + f"\33[90m{char}\33[0m" * (max_len - counter)
             else:
                 bar = f"\33[92m{char}\33[0m" * counter + f"\33[90m{char}\33[0m" * (max_len - counter)
-            print("\r" + bar, "|", suffix, end="", flush=True)
         elif counter > len(fill) :
             if "--colored" in pos_args:
                 bar = f"\33[90m{char}\33[0m" * (counter - len(fill)) + f"\33[92m{gradient_text(fill, colors)}\33[0m" + f"\33[90m{char}\33[0m" * (max_len - counter)
             else:
                 bar = f"\33[90m{char}\33[0m" * (counter - len(fill)) + f"\33[92m{fill}\33[0m" + f"\33[90m{char}\33[0m" * (max_len - counter)
-            print("\r" + bar, "|", suffix, end="", flush=True)
-            
-        if counter == max_len:
+        
+        bar_fill = f"{bar} | {suffix}"
+        
+        if counter != max_len:
+            print("\r" + bar_fill, end="", flush=True)
+            counter += 1
+        else:
             for i in range(len(fill)+1):
                 if "--colored" in pos_args:
                     bar = f"\33[90m{char}\33[0m" * ((counter - len(fill)) + i) + f"\33[92m{gradient_text(char * (len(fill)-i), colors)}\33[0m"
@@ -192,13 +197,19 @@ def unknown_progress(start_time, pos_args, prefix, suffix):
                 print("\r" + bar, "|", suffix, end="", flush=True)
                 time.sleep(speed)
             counter = 1
-        else:
-            counter += 1
+            
+        bar_fill_length = len(re.sub(r'\x1B\[[^m]*m', '', bar_fill))
+        
+        if prev_unknown_bar_fill_length > bar_fill_length:
+            sys.stdout.write("\33[2K")
+        
+        prev_unknown_bar_fill_length = bar_fill_length
+        
         time.sleep(speed)
 
 def known_progress(start_time, iteration, total, pos_args, prefix='', suffix='', done='', decimals=1, length=30, fill='━'):
-    global prev_bar_fill_length
-
+    global prev_known_bar_fill_length
+    
     color = "\33[93m"
     
     percent = ("{0:." + str(decimals) + "f}").format(100 * (iteration / float(total)))
@@ -218,16 +229,17 @@ def known_progress(start_time, iteration, total, pos_args, prefix='', suffix='',
         bar_fill = f"{prefix}{bar} {percent}% | {suffix}"
 
     bar_fill_length = len(re.sub(r'\x1B\[[^m]*m', '', bar_fill))
-        
-    if prev_bar_fill_length is not None and bar_fill_length != prev_bar_fill_length:
-        sys.stdout.write("\r" + " " * prev_bar_fill_length)
-    prev_bar_fill_length = bar_fill_length
     
-    sys.stdout.write(f'\r' + bar_fill)
-    sys.stdout.flush()
-
-    # Print New Line on Complete
-    if iteration == total or int(round(float(percent), 0)) == 100:
+    if prev_known_bar_fill_length > bar_fill_length:
+        sys.stdout.write("\33[2K")
+    prev_known_bar_fill_length = bar_fill_length
+    
+    if iteration != total or int(round(float(percent), 0)) != 100:
+        sys.stdout.write(f"\r" + bar_fill)
+        sys.stdout.flush()
+        
+    else:
+        # Print New Line on Complete
         if "--colored" in pos_args:
             bar = gradient_text(fill * length, colors)
         else:
@@ -238,9 +250,9 @@ def known_progress(start_time, iteration, total, pos_args, prefix='', suffix='',
         else:
             bar_fill = f"{prefix}{bar} 100% {done} {suffix.split("|")[1].strip()}"
         
-        sys.stdout.write("\r" + " " * bar_fill_length)
+        sys.stdout.write("\33[2K")
         sys.stdout.write(f"\r" + bar_fill)
-        sys.stdout.flush
+        sys.stdout.flush()
         return "OK"
 
 def check_file(output_filename, output_path, pos_args, skip=False):
@@ -291,31 +303,37 @@ def format_suffix(start_time, pos_args, speed_status):
         suffix = f"{speed} | {formatted_time}"
     
     return suffix, done
-                        
 
-def read_pipe(process, pipe, pos_args, input_file, prefix):
+def clear_line():
+    sys.stdout.write("\033[2K")
+    sys.stdout.flush()
+
+def read_stream(process, stream, pos_args, input_file, prefix):
     global error, stdline
     progress = None
     ffstats = False
-    stream = False
+    ffstream = False
     
     debug = Debug()
     #debug.set = True
 
-    while not stop_event.is_set():
+    while True:
         
-        line = pipe.readline()
+        line = stream.readline()
+            
         if not line:
             break
             
         text = line.strip()
-        stdline.append(text)
         
         if '--log' in pos_args:
-            print(text)
-            continue
+            clear_line()
+            sys.stdout.write(line)
+            #continue
+        else:
+            stdline.append(text)
 
-        if "Duration" in text and not stream:
+        if "Duration" in text and not ffstream:
             # Capture start time
             start_time = time.time()
             debug.printf("SUCCESS 1/4")
@@ -323,9 +341,9 @@ def read_pipe(process, pipe, pos_args, input_file, prefix):
             # Scrap total_duration
             formatted_total_dur = text.split()[1].strip(",")
             total_duration = duration_to_seconds(formatted_total_dur)
-            stream = True
+            ffstream = True
 
-        if stream and ("frame=" in text.split() or "size=" in text or "time=" in text):
+        if ffstream and ("frame=" in text.split() or "size=" in text or "time=" in text):
             part_duration = extract_time(text)
             speed_status = extract_speed(text)
                         
@@ -350,24 +368,25 @@ def read_pipe(process, pipe, pos_args, input_file, prefix):
                     if progress == "OK":
                         break
                     error = False
-                except Exception:
-                    break
+                except Exception as err:
+                    print("\n" + std_type + ":", err)
+                    os._exit(1)
 
-    # Close the pipe after reading
-    pipe.close()
+    # Close the pipe stream after reading
+    stream.close()
 
     # Wait for the process to complete
     process.wait()
 
     if (
     process.returncode == 0
-    and stream
+    and ffstream
     and ffstats
     and progress != "OK"
     ):
         known_progress(start_time, 100, 100, pos_args, prefix=prefix, suffix=suffix, done=done)
     
-    debug.printf("SUCCESS 4/4", stream, ffstats, progress)
+    debug.printf("SUCCESS 4/4", ffstream, ffstats, progress)
 
 def start_process(args, pos_args, input_file, prefix='', pid=None):
     global error, stdline
@@ -376,26 +395,26 @@ def start_process(args, pos_args, input_file, prefix='', pid=None):
         command = f"ffmpeg {' '.join(args)}"
         if input_filenames:
             command = command + " -y"
-        process = subprocess.Popen(command, stderr=subprocess.PIPE, stdout=subprocess.PIPE, shell=True, text=True, encoding='utf-8')
+        process = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            shell=True,
+            text=True,
+            encoding='utf-8'
+            )
+        read_stream(process, process.stdout, pos_args, input_file, prefix)
         pid = process.pid
-
-        # Threads to read stdout and stderr
-        stdout_thread = threading.Thread(target=read_pipe, args=(process, process.stdout, pos_args, input_file, prefix))
-        stderr_thread = threading.Thread(target=read_pipe, args=(process, process.stderr, pos_args, input_file, prefix))
-
-        # Start the threads
-        stdout_thread.start()
-        stderr_thread.start()
-        
-        # Wait for both threads to complete
-        stdout_thread.join()
-        stderr_thread.join()
-                
+     
         if error:
-            output = "\n".join(stdline)
-            print(output.replace("usage: ffmpeg", f"usage: ffmpegp").strip())
             colors = [(100, 200, 255), (255, 100, 255)]  # Cyan -> Pink
-            print(output.replace("Use -h to", f"Use \33[92m-h\33[0m to get \33[93mffmpeg's\33[0m help and use \33[94mhelp\33[0m to get {gradient_text('ffmpegp\'s', colors)} help"))
+            output = (
+            "\n".join(stdline)
+            .replace("usage: ffmpeg", f"usage: ffmpegp")
+            .replace("Use -h to", f"Use \33[92m-h\33[0m to get \33[93mffmpeg's\33[0m help and use \33[94mhelp\33[0m to get {gradient_text('ffmpegp\'s', colors)} help")
+            .strip()
+            )
+            print(output)
         else:
             print()
 
@@ -409,10 +428,9 @@ def start_process(args, pos_args, input_file, prefix='', pid=None):
                 os.kill(process.pid, 9)
             except Exception:
                 pass
-        stop_event.set() # stop the threads
         print("\nProgram interrupted!")
 
-        # Hard exit (no threading shutdown)
+        # Hard exit
         os._exit(1)
 
 try:
@@ -453,6 +471,7 @@ def main():
             ar = [a for a in raw_args if a.startswith(arg)]
             if ar:
                 raw_args.remove(ar[0])
+                
 
         if "help" in pos_args:
             colors = [(100, 200, 255), (255, 100, 255)]  # Cyan -> Pink

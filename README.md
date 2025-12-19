@@ -9,20 +9,20 @@ ffmpegp (short for "FFmpeg Plus") is a Python-based utility designed to simplify
 ## Preview
 <div align="center">
 <kbd>
-  <img src="https://github.com/user-attachments/assets/bab2f5a5-9b61-46ce-a708-029174d6f8b7" alt="ffmpegp-logo" /> 
+  <img src="https://github.com/user-attachments/assets/bab2f5a5-9b61-46ce-a708-029174d6f8b7" /> 
 </kbd>
 </div><br>
 
 <div align="center">
 <kbd>
-  <img src="https://github.com/user-attachments/assets/508753ab-b30e-4b67-b0b6-ec115408674e" alt="ffmpegp-logo" /> 
+  <img src="https://github.com/user-attachments/assets/508753ab-b30e-4b67-b0b6-ec115408674e" /> 
 </kbd>
 </div><br>
 
 
 <div align="center">
 <kbd>
-  <img src="https://github.com/user-attachments/assets/cf06a1d0-c5ff-47a1-90c6-1b1f6b483529" alt="ffmpegp-logo" /> 
+  <img src="https://github.com/user-attachments/assets/101c7838-5e7e-4b29-8f6e-7c7c8df9e167" /> 
 </kbd>
 </div><br>
 
