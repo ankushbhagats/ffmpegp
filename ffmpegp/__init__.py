@@ -7,6 +7,7 @@ import shutil
 import subprocess
 from random import randint
 from jsonpath_ng import parse
+from pyargument import PyArgument
 
 ffmpeg_path = shutil.which("ffmpeg")
 ffprobe_path = shutil.which("ffprobe")
@@ -52,7 +53,7 @@ def query_json(json_data, json_path):
         # Parse and apply the JSON path query
         jsonpath_expr = parse(json_path)
         result = [match.value for match in jsonpath_expr.find(json_data)]
-        return result if result else None
+        return result[0] if result else None
     except Exception as e:
         print(f"Invalid JSON path or error: {e}")
         return None
@@ -266,15 +267,6 @@ def check_file(output_filename, output_path, pos_args, skip=False):
                 else:
                     return True
 
-def get_metadata(stdline, input_file, pos_args):
-    for index, path in enumerate(input_file):
-        inputs = []
-        path = path.replace("\"", "")
-        if "--stdout" in pos_args:
-            inputs.append(f"input{index}:\"{path}\"")
-        else:
-            print(f"Input #{index}: from \"{path}\"")
-        
 class Debug:
     set = False
     
@@ -307,13 +299,19 @@ def format_suffix(start_time, pos_args, speed_status):
 def clear_line():
     sys.stdout.write("\033[2K")
     sys.stdout.flush()
+    
+class FFmpeg:
+    def __init__(self):
+        self.input = False
+        self.output = False
+        self.stats = False
+        self.duration = False
+        self.stream = False
 
 def read_stream(process, stream, pos_args, input_file, prefix):
     global error, stdline
     progress = None
-    ffstats = False
-    ffstream = False
-    
+    ffmpeg = FFmpeg()
     debug = Debug()
     #debug.set = True
 
@@ -332,8 +330,20 @@ def read_stream(process, stream, pos_args, input_file, prefix):
             #continue
         else:
             stdline.append(text)
-
-        if "Duration" in text and not ffstream:
+            
+            if "Input #" in text:
+                print(text.rstrip(":"))
+                ffmpeg.input = True
+                
+            if "Output #" in text:
+                print(text.rstrip(":"))
+                ffmpeg.output = True
+                
+            if "Stream #" in text and "--stream" in pos_args:
+                print(text.rstrip(":"))
+                ffmpeg.stream = True
+            
+        if "Duration" in text and not ffmpeg.duration:
             # Capture start time
             start_time = time.time()
             debug.printf("SUCCESS 1/4")
@@ -341,9 +351,9 @@ def read_stream(process, stream, pos_args, input_file, prefix):
             # Scrap total_duration
             formatted_total_dur = text.split()[1].strip(",")
             total_duration = duration_to_seconds(formatted_total_dur)
-            ffstream = True
+            ffmpeg.duration = True
 
-        if ffstream and ("frame=" in text.split() or "size=" in text or "time=" in text):
+        if ffmpeg.duration and ("frame=" in text.split() or "size=" in text or "time=" in text):
             part_duration = extract_time(text)
             speed_status = extract_speed(text)
                         
@@ -352,9 +362,7 @@ def read_stream(process, stream, pos_args, input_file, prefix):
                 try:
                     iteration, total = map(lambda x : round(x, 0), [part_duration, total_duration])
                     
-                    if not ffstats:
-                        get_metadata(stdline, input_file, pos_args)
-                        ffstats = True
+                    ffmpeg.stats = True
                     
                     debug.printf("SUCCESS 3/4", iteration, total)
                     
@@ -380,13 +388,13 @@ def read_stream(process, stream, pos_args, input_file, prefix):
 
     if (
     process.returncode == 0
-    and ffstream
-    and ffstats
+    and ffmpeg.duration
+    and ffmpeg.stats
     and progress != "OK"
     ):
         known_progress(start_time, 100, 100, pos_args, prefix=prefix, suffix=suffix, done=done)
     
-    debug.printf("SUCCESS 4/4", ffstream, ffstats, progress)
+    debug.printf("SUCCESS 4/4", ffmpeg.stream, ffmpeg.duration, ffmpeg.stats, progress)
 
 def start_process(args, pos_args, input_file, prefix='', pid=None):
     global error, stdline
@@ -443,35 +451,24 @@ def main():
         args = []
         pos_args = []
         mode = "single"
-        skip_pos_args = ["--colored", "--stdout", "help", "--log", "-y"]
-        skip_opt_args = ["--jq", "--dir", "--format="]
-        opt_args = {key.rstrip('='): [] for key in skip_opt_args}
+        skip_pos_args = ["--colored", "--stdout", "--stream", "help", "--log", "-y"]
 
         for arg in skip_pos_args:
             if arg in raw_args:
                 pos_args.append(arg)
                 raw_args.remove(arg)
-
-        for index, arg in enumerate(raw_args):
-            for key in opt_args:
-                if arg == key.rstrip('='):
-                    pos_args.append(arg)
-                    if index + 1 < len(raw_args):
-                        next_arg = raw_args[index + 1]
-                        if not next_arg.startswith("-"):
-                            opt_args[key.rstrip('=')] = next_arg
-                            raw_args.remove(next_arg)
-
-                elif arg.startswith(key):
-                    pos_args.append(arg)
-                    value = arg.split('=')[1].split(',')
-                    opt_args[key.rstrip('=')] = value
-
-        for arg in skip_opt_args:
-            ar = [a for a in raw_args if a.startswith(arg)]
-            if ar:
-                raw_args.remove(ar[0])
                 
+        parser = PyArgument()
+        parser.add_arg("--jq", optarg=True)
+        parser.add_arg("--dir", optarg=True, default=os.getcwd())
+        parser.add_arg("--format", optarg=True)
+        parser.parse_args()
+        
+        opt_args = parser.pyargs
+                
+        for arg in opt_args:
+            if arg in raw_args:
+                raw_args.remove(arg)
 
         if "help" in pos_args:
             colors = [(100, 200, 255), (255, 100, 255)]  # Cyan -> Pink
@@ -482,11 +479,12 @@ positional:
     \33[92m--colored\33[0m      Show gradient color output
     \33[92m--log\33[0m          Show logs of running process
     \33[92m--stdout\33[0m       Turn off all colors and disable any ASCII, printing only texts.
+    \33[92m--stream\33[0m       Show ffmpeg stream information
 
 optional:
     \33[92m--jq\33[0m           JSON path to query specific data (e.g., format.filename)
     \33[92m--dir\33[0m          Use this flag to start multi task mode. (default: current directory)
-    \33[92m--format\33[0m       Set specific file format to find. (works with '--dir' tag) (default: all) (e.g., --format=mp4)
+    \33[92m--format\33[0m       Set specific file format to find. (works with '--dir' tag) (default: all) (e.g., --format=mp4,mkv)
 
 placeholders:
     \33[92m{}\33[0m: Represents the input filename.
@@ -512,7 +510,7 @@ homepage: \33[4mhttps://github.com/ankushbhagats/ffmpegp\33[0m
             if os.path.isfile(file):
                 media_details = get_media_details(file)
                 if media_details:
-                    json_path = opt_args["--jq"]
+                    json_path = parser.jq
                     if json_path:
                         # Query the JSON object using the provided JSON path
                         query_result = query_json(media_details, json_path)
@@ -526,18 +524,14 @@ homepage: \33[4mhttps://github.com/ankushbhagats/ffmpegp\33[0m
                 sys.exit(0)
         except Exception:
             pass
-
-        if "--dir" in pos_args:
-            mode = "multi"
-            formats = opt_args["--format"]
             
-            if opt_args["--dir"]:
-                directory = os.path.abspath(opt_args["--dir"])
-            else:
-                directory = os.getcwd()
+        if parser.dir.exists:
+            mode = "multi"
+            formats = parser.format.split(",")
+            directory = os.path.abspath(parser.dir)
         
             if not os.path.isdir(directory):
-                print(f"provided '{opt_args['--dir']}' path not exist.")
+                print(f"provided '{parser.dir}' path not exist.")
                 sys.exit(1)
 
         for arg in raw_args:
