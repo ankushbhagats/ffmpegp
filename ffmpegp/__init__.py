@@ -161,7 +161,7 @@ def get_formatted_time(start_time):
     # Format the difference as HH:MM:SS
     return time.strftime("%H:%M:%S", time.gmtime(elapsed_time))
 
-def unknown_progress(start_time, pos_args, prefix, suffix):
+def unknown_progress(start_time, pos_args, prefix, suffix, jsout):
     global prev_unknown_bar_fill_length
     
     char = "━"
@@ -171,44 +171,56 @@ def unknown_progress(start_time, pos_args, prefix, suffix):
     colors = [(100, 200, 255), (255, 100, 255), (255, 255, 100)]  # Cyan -> Pink -> Yellow
     
     fill = int(max_len / 2) * char
-        
-    for i in range(max_len+1):
-        if counter <= len(fill):
-            if "--colored" in pos_args:
-                bar = f"{gradient_text(char * counter, colors)}\33[0m" + f"\33[90m{char}\33[0m" * (max_len - counter)
-            else:
-                bar = f"\33[92m{char}\33[0m" * counter + f"\33[90m{char}\33[0m" * (max_len - counter)
-        elif counter > len(fill) :
-            if "--colored" in pos_args:
-                bar = f"\33[90m{char}\33[0m" * (counter - len(fill)) + f"\33[92m{gradient_text(fill, colors)}\33[0m" + f"\33[90m{char}\33[0m" * (max_len - counter)
-            else:
-                bar = f"\33[90m{char}\33[0m" * (counter - len(fill)) + f"\33[92m{fill}\33[0m" + f"\33[90m{char}\33[0m" * (max_len - counter)
-        
-        bar_fill = f"{bar} | {suffix}"
-        
-        if counter != max_len:
-            print("\r" + bar_fill, end="", flush=True)
-            counter += 1
-        else:
-            for i in range(len(fill)+1):
+    
+    if "--stdout" in pos_args:
+        if prefix:
+            prefix = f"{prefix} "
+        sys.stdout.write("\r" + prefix + "process=running " + suffix)
+        sys.stdout.flush()
+    elif "--jsout" in pos_args:
+        if prefix:
+            jsout["prefix"] = prefix
+        jsout["process"] = "running"
+        sys.stdout.write(json.dumps(jsout)+"\n")
+        sys.stdout.flush()
+    else:
+        for i in range(max_len+1):
+            if counter <= len(fill):
                 if "--colored" in pos_args:
-                    bar = f"\33[90m{char}\33[0m" * ((counter - len(fill)) + i) + f"\33[92m{gradient_text(char * (len(fill)-i), colors)}\33[0m"
+                    bar = f"{gradient_text(char * counter, colors)}\33[0m" + f"\33[90m{char}\33[0m" * (max_len - counter)
                 else:
-                    bar = f"\33[90m{char}\33[0m" * ((counter - len(fill)) + i) + f"\33[92m{char}\33[0m" * (len(fill)-i)
-                print("\r" + bar, "|", suffix, end="", flush=True)
-                time.sleep(speed)
-            counter = 1
+                    bar = f"\33[92m{char}\33[0m" * counter + f"\33[90m{char}\33[0m" * (max_len - counter)
+            elif counter > len(fill) :
+                if "--colored" in pos_args:
+                    bar = f"\33[90m{char}\33[0m" * (counter - len(fill)) + f"\33[92m{gradient_text(fill, colors)}\33[0m" + f"\33[90m{char}\33[0m" * (max_len - counter)
+                else:
+                    bar = f"\33[90m{char}\33[0m" * (counter - len(fill)) + f"\33[92m{fill}\33[0m" + f"\33[90m{char}\33[0m" * (max_len - counter)
             
-        bar_fill_length = len(re.sub(r'\x1B\[[^m]*m', '', bar_fill))
-        
-        if prev_unknown_bar_fill_length > bar_fill_length:
-            sys.stdout.write("\33[2K")
-        
-        prev_unknown_bar_fill_length = bar_fill_length
-        
-        time.sleep(speed)
+            bar_fill = f"{bar} | {suffix}"
+            
+            if counter != max_len:
+                print("\r" + bar_fill, end="", flush=True)
+                counter += 1
+            else:
+                for i in range(len(fill)+1):
+                    if "--colored" in pos_args:
+                        bar = f"\33[90m{char}\33[0m" * ((counter - len(fill)) + i) + f"\33[92m{gradient_text(char * (len(fill)-i), colors)}\33[0m"
+                    else:
+                        bar = f"\33[90m{char}\33[0m" * ((counter - len(fill)) + i) + f"\33[92m{char}\33[0m" * (len(fill)-i)
+                    print("\r" + bar, "|", suffix, end="", flush=True)
+                    time.sleep(speed)
+                counter = 1
+                
+            bar_fill_length = len(re.sub(r'\x1B\[[^m]*m', '', bar_fill))
+            
+            if prev_unknown_bar_fill_length > bar_fill_length:
+                sys.stdout.write("\33[2K")
+            
+            prev_unknown_bar_fill_length = bar_fill_length
+            
+            time.sleep(speed)
 
-def known_progress(start_time, iteration, total, pos_args, prefix='', suffix='', done='', decimals=1, length=30, fill='━'):
+def known_progress(start_time, iteration, total, pos_args, jsout, prefix='', suffix='', done='', decimals=1, length=30, fill='━'):
     global prev_known_bar_fill_length
     
     color = "\33[93m"
@@ -231,13 +243,20 @@ def known_progress(start_time, iteration, total, pos_args, prefix='', suffix='',
 
     bar_fill_length = len(re.sub(r'\x1B\[[^m]*m', '', bar_fill))
     
-    if prev_known_bar_fill_length > bar_fill_length:
+    if "--jsout" not in pos_args and prev_known_bar_fill_length > bar_fill_length:
         sys.stdout.write("\33[2K")
     prev_known_bar_fill_length = bar_fill_length
     
     if iteration != total or int(round(float(percent), 0)) != 100:
-        sys.stdout.write(f"\r" + bar_fill)
-        sys.stdout.flush()
+        if "--jsout" in pos_args:
+            if prefix:
+                jsout["prefix"] = prefix
+            jsout["process"] = float(percent)
+            sys.stdout.write(json.dumps(jsout)+"\n")
+            sys.stdout.flush()
+        else:
+            sys.stdout.write("\r" + bar_fill)
+            sys.stdout.flush()
         
     else:
         # Print New Line on Complete
@@ -247,12 +266,16 @@ def known_progress(start_time, iteration, total, pos_args, prefix='', suffix='',
             bar = f"{color}{fill}\33[0m" * length
 
         if "--stdout" in pos_args:
-            bar_fill = f"{prefix}progress=100% {suffix}"
+            bar_fill = f"\r{prefix}progress=100% {suffix}"
+            sys.stdout.write("\33[2K")
+        elif "--jsout" in pos_args:
+            jsout["process"] = 100
+            bar_fill = json.dumps(jsout)
         else:
-            bar_fill = f"{prefix}{bar} 100% {done} {suffix.split("|")[1].strip()}"
+            bar_fill = f"\r{prefix}{bar} 100% {done} {suffix.split("|")[1].strip()}"
+            sys.stdout.write("\33[2K")
         
-        sys.stdout.write("\33[2K")
-        sys.stdout.write(f"\r" + bar_fill)
+        sys.stdout.write(bar_fill)
         sys.stdout.flush()
         return "OK"
 
@@ -288,13 +311,18 @@ def format_suffix(start_time, pos_args, speed_status):
         speed = f'{gradient_text(f"speed:{speed_status}", colors)}'
         colors = [(100, 200, 255), (255, 255, 100)]  # Cyan -> Yellow
         formatted_time = gradient_text(elapsed_time, colors)
+        
+    stats = {
+        "speed": speed_status,
+        "elapsed": elapsed_time
+    }
                     
     if "--stdout" in pos_args:
         suffix = f"speed={speed_status} time={elapsed_time}"
     else:
         suffix = f"{speed} | {formatted_time}"
     
-    return suffix, done
+    return stats, suffix, done
 
 def clear_line():
     sys.stdout.write("\033[2K")
@@ -307,6 +335,17 @@ class FFmpeg:
         self.stats = False
         self.duration = False
         self.stream = False
+        self.json = {}
+        
+def capture(name, text, ffmpeg, pos_args):
+    value = text.rstrip(":")
+    if "--jsout" in pos_args:
+        if name not in ffmpeg.json:
+            ffmpeg.json[name] = []
+        ffmpeg.json[name].append(value)
+    else:
+        print(value)
+    setattr(ffmpeg, name, True)
 
 def read_stream(process, stream, pos_args, input_file, prefix):
     global error, stdline
@@ -332,16 +371,13 @@ def read_stream(process, stream, pos_args, input_file, prefix):
             stdline.append(text)
             
             if "Input #" in text:
-                print(text.rstrip(":"))
-                ffmpeg.input = True
+                capture("input", text, ffmpeg, pos_args)
                 
             if "Output #" in text:
-                print(text.rstrip(":"))
-                ffmpeg.output = True
+                capture("output", text, ffmpeg, pos_args)
                 
             if "Stream #" in text and "--stream" in pos_args:
-                print(text.rstrip(":"))
-                ffmpeg.stream = True
+                capture("stream", text, ffmpeg, pos_args)
             
         if "Duration" in text and not ffmpeg.duration:
             # Capture start time
@@ -362,22 +398,25 @@ def read_stream(process, stream, pos_args, input_file, prefix):
                 try:
                     iteration, total = map(lambda x : round(x, 0), [part_duration, total_duration])
                     
+                    if not ffmpeg.stats and "--jsout" not in pos_args:
+                        print()
                     ffmpeg.stats = True
                     
                     debug.printf("SUCCESS 3/4", iteration, total)
                     
-                    suffix, done = format_suffix(start_time, pos_args, speed_status)
+                    stats, suffix, done = format_suffix(start_time, pos_args, speed_status)
                     
+                    ffmpeg.json = ffmpeg.json | stats
                     if total != 0:
-                        progress = known_progress(start_time, iteration, total, pos_args, prefix=prefix, suffix=suffix, done=done)
+                        progress = known_progress(start_time, iteration, total, pos_args, ffmpeg.json, prefix=prefix, suffix=suffix, done=done)
                     else:
-                        progress = unknown_progress(start_time, pos_args, prefix, suffix)
-                        
+                        progress = unknown_progress(start_time, pos_args, prefix, suffix, ffmpeg.json)
+                            
                     if progress == "OK":
                         break
                     error = False
                 except Exception as err:
-                    print("\n" + std_type + ":", err)
+                    print(err)
                     os._exit(1)
 
     # Close the pipe stream after reading
@@ -392,7 +431,7 @@ def read_stream(process, stream, pos_args, input_file, prefix):
     and ffmpeg.stats
     and progress != "OK"
     ):
-        known_progress(start_time, 100, 100, pos_args, prefix=prefix, suffix=suffix, done=done)
+        known_progress(start_time, 100, 100, pos_args, ffmpeg.json, prefix=prefix, suffix=suffix, done=done)
     
     debug.printf("SUCCESS 4/4", ffmpeg.stream, ffmpeg.duration, ffmpeg.stats, progress)
 
@@ -451,7 +490,7 @@ def main():
         args = []
         pos_args = []
         mode = "single"
-        skip_pos_args = ["--colored", "--stdout", "--stream", "help", "--log", "-y"]
+        skip_pos_args = ["--colored", "--stdout", "--stream", "--jsout", "help", "--log", "-y"]
 
         for arg in skip_pos_args:
             if arg in raw_args:
@@ -461,7 +500,7 @@ def main():
         parser = PyArgument()
         parser.add_arg("--jq", optarg=True)
         parser.add_arg("--dir", optarg=True, default=os.getcwd())
-        parser.add_arg("--format", optarg=True)
+        parser.add_arg("--format", optarg=True, default="")
         parser.parse_args()
         
         opt_args = parser.pyargs
@@ -480,6 +519,7 @@ positional:
     \33[92m--log\33[0m          Show logs of running process
     \33[92m--stdout\33[0m       Turn off all colors and disable any ASCII, printing only texts.
     \33[92m--stream\33[0m       Show ffmpeg stream information
+    \33[92m--jsout\33[0m        Show output process in json format
 
 optional:
     \33[92m--jq\33[0m           JSON path to query specific data (e.g., format.filename)
